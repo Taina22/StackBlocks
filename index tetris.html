@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>StackBlocks</title> <!-- Nome do jogo, não é Tetris, é a nossa versão original -->
+
+  <style>
+    /* Fonte retrô estilo videogame */
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+    /* Resetando estilos padrão e colocando a fonte em tudo */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Press Start 2P', monospace;
+    }
+
+    /* Corpo da página: fundo preto e centralizado */
+    body {
+      background-color: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #fff;
+    }
+
+    /* Container principal que segura o jogo */
+    .game-container {
+      background-color: rgba(0, 0, 0, 0.75); /* levemente transparente */
+      display: grid; /* grade com 3 colunas */
+      grid-template-columns: 1fr 2fr 1fr; /* lateral - jogo - lateral */
+      grid-template-rows: auto auto; /* duas linhas: jogo + controles */
+      gap: 20px;
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 1000px;
+      width: 90vw; /* ocupa 90% da tela */
+    }
+
+    /* Lateral e a área onde aparece a próxima peça */
+    .sidebar, .next-container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding: 10px;
+      background-color: #111;
+      border: 3px solid red;
+      height: 600px;
+      justify-content: flex-start;
+      font-size: 14px;
+      border-radius: 5px;
+    }
+
+    /* Caixinhas dentro da lateral (score, tempo, etc.) */
+    .sidebar div, .next-container canvas {
+      background-color: #222;
+      padding: 10px;
+      border: 2px solid #555;
+      text-align: center;
+      border-radius: 3px;
+    }
+
+    /* O tabuleiro do jogo */
+    canvas#tetris {
+      background-color: #000;
+      border: 4px solid #fff;
+      border-radius: 5px;
+    }
+
+    /* Área dos botões de controle */
+    .controls {
+      grid-column: span 3; /* ocupa as 3 colunas */
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    /* Botões em estilo retrô */
+    button {
+      padding: 12px 20px;
+      font-size: 14px;
+      background-color: #222;
+      color: #fff;
+      border: 2px solid #fff;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      border-radius: 5px;
+      user-select: none;
+    }
+
+    /* Quando passa o mouse no botão */
+    button:hover {
+      background-color: #fff;
+      color: #000;
+    }
+
+    /* Botões coloridos de acordo com a função */
+    button#start { border-color: #00ff00; } /* verde: iniciar */
+    button#restart { border-color: orange; } /* laranja: reiniciar */
+    button#pause { border-color: red; } /* vermelho: pausar */
+
+    /* Tela de GAME OVER que aparece em cima do jogo */
+    #gameOverScreen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(0,0,0,0.9);
+      color: red;
+      font-size: 32px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Press Start 2P', monospace;
+      display: none; /* só aparece quando o jogo acaba */
+      z-index: 10;
+    }
+
+    #gameOverScreen p { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+
+  <!-- Estrutura principal -->
+  <div class="game-container">
+    
+    <!-- Painel lateral com informações -->
+    <div class="sidebar">
+      <div id="score">SCORE: <span>0</span></div>
+      <div id="time">TIME: <span>0</span>s</div>
+      <div id="lines">LINE: <span>0</span></div>
+      <div id="combo">COMBO: <span>0</span></div>
+    </div>
+
+    <!-- Tabuleiro principal do jogo -->
+    <canvas id="tetris" width="300" height="600"></canvas>
+
+    <!-- Onde aparece a próxima peça -->
+    <div class="next-container">
+      <canvas id="next" width="120" height="120"></canvas>
+    </div>
+
+    <!-- Botões de controle -->
+    <div class="controls">
+      <button id="left">◀</button>
+      <button id="right">▶</button>
+      <button id="down">▼</button>
+      <button id="rotate">⟳</button>
+      <button id="start">START</button>
+      <button id="pause">PAUSE</button>
+      <button id="restart">RESTART</button>
+    </div>
+  </div>
+
+  <!-- Tela de game over -->
+  <div id="gameOverScreen">
+    <p>GAME OVER</p>
+    <p>Pressione tecla E para reiniciar</p>
+  </div>
+
+<script>
+  // ==== CONFIGURAÇÃO INICIAL DO JOGO ====
+
+  // Pega o canvas principal (tabuleiro) e o contexto de desenho
+  const canvas = document.getElementById('tetris');
+  const ctx = canvas.getContext('2d');
+
+  // Pega o canvas menor (próxima peça) e o contexto de desenho
+  const nextCanvas = document.getElementById('next');
+  const nextCtx = nextCanvas.getContext('2d');
+
+  // Elementos HTML para mostrar informações
+  const scoreEl = document.querySelector('#score span');
+  const timeEl = document.querySelector('#time span');
+  const linesEl = document.querySelector('#lines span');
+  const comboEl = document.querySelector('#combo span');
+  const gameOverScreen = document.getElementById('gameOverScreen');
+
+  // Arena = matriz que representa o tabuleiro (10 colunas x 20 linhas)
+  let arena = createMatrix(10, 20);
+
+  // Controle de queda automática
+  let dropCounter = 0;
+  let dropInterval = 1000; // peça cai a cada 1 segundo
+  let lastTime = 0;
+  let startTime = 0;
+  let gamePaused = true;
+  let gameOver = false;
+
+  // Dados do jogador (posição, peça atual, próxima peça, score, etc.)
+  const player = {
+    pos: { x: 0, y: 0 },
+    matrix: null,
+    next: null,
+    score: 0,
+    lines: 0,
+    combo: 0,
+  };
+
+  // ==== PEÇAS EXCLUSIVAS (não são Tetris) ====
+  const pieces = {
+    'A': [
+      [1, 1, 0],
+      [0, 1, 1],
+      [0, 1, 0],
+    ], // formato "chave inglesa"
+
+    'B': [
+      [0, 2, 0],
+      [2, 2, 2],
+      [0, 0, 2],
+    ], // formato "raio torto"
+
+    'C': [
+      [3, 0, 3],
+      [3, 3, 3],
+    ], // formato "U"
+
+    'D': [
+      [0, 4, 4],
+      [4, 4, 0],
+      [0, 4, 0],
+    ], // bumerangue
+
+    'E': [
+      [5, 5, 5],
+      [0, 5, 0],
+      [5, 0, 5],
+    ], // estrela quebrada
+
+    'F': [
+      [6, 6, 0],
+      [0, 6, 6],
+      [0, 6, 0],
+    ], // zig zag alternativo
+
+    'G': [
+      [7, 7, 7],
+      [7, 0, 0],
+      [7, 0, 0],
+    ], // coluna com rabinho
+  };
+
+  // ==== FUNÇÕES DO JOGO ====
+
+  // Cria uma matriz vazia (arena)
+  function createMatrix(w, h) {
+    const matrix = [];
+    while (h--) matrix.push(new Array(w).fill(0));
+    return matrix;
+  }
+
+  // Sorteia uma peça aleatória
+  function createPiece() {
+    const keys = Object.keys(pieces);
+    const rand = keys[Math.floor(Math.random() * keys.length)];
+    return pieces[rand];
+  }
+
+  // Cola a peça no tabuleiro quando ela encosta
+  function merge(arena, player) {
+    player.matrix.forEach((row, y) => {
+      row.forEach((val, x) => {
+        if (val !== 0) {
+          arena[y + player.pos.y][x + player.pos.x] = val;
+        }
+      });
+    });
+  }
+
+  // Checa se a peça bateu em algo (parede, chão ou outra peça)
+  function collide(arena, player) {
+    const m = player.matrix;
+    const o = player.pos;
+    for (let y = 0; y < m.length; y++) {
+      for (let x = 0; x < m[y].length; x++) {
+        if (m[y][x] !== 0 && (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Reseta o jogador com uma nova peça
+  function playerReset() {
+    player.matrix = player.next || createPiece();
+    player.next = createPiece();
+    player.pos.y = 0;
+    player.pos.x = Math.floor(arena[0].length / 2) - Math.floor(player.matrix[0].length / 2);
+
+    if (collide(arena, player)) {
+      arena = createMatrix(10, 20);
+      player.score = 0;
+      player.lines = 0;
+      player.combo = 0;
+      gameOver = true;
+      gamePaused = true;
+      gameOverScreen.style.display = 'flex';
+    }
+    drawNext();
+  }
+
+  // Desenha qualquer matriz no canvas
+  function drawMatrix(ctx, matrix, offset) {
+    matrix.forEach((row, y) => {
+      row.forEach((val, x) => {
+        if (val !== 0) {
+          ctx.fillStyle = `hsl(${val * 45}, 80%, 60%)`; // cor diferente pra cada peça
+          ctx.fillRect((x + offset.x) * 30, (y + offset.y) * 30, 30, 30);
+          ctx.strokeStyle = "#000"; // borda preta
+          ctx.strokeRect((x + offset.x) * 30, (y + offset.y) * 30, 30, 30);
+        }
+      });
+    });
+  }
+
+  // Desenha tudo na tela
+  function draw() {
+    ctx.fillStyle = "#000"; // limpa fundo
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawMatrix(ctx, arena, {x: 0, y: 0}); // desenha tabuleiro
+    drawMatrix(ctx, player.matrix, player.pos); // desenha peça atual
+  }
+
+  // Mostra a próxima peça na caixinha
+  function drawNext() {
+    nextCtx.fillStyle = "#000";
+    nextCtx.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+    if (player.next) {
+      drawMatrix(nextCtx, player.next, {x: 1, y: 1});
+    }
+  }
+
+  // Limpa linhas completas
+  function arenaSweep() {
+    let rowCount = 1;
+    let linesCleared = 0;
+    outer: for (let y = arena.length - 1; y >= 0; y--) {
+      for (let x = 0; x < arena[y].length; x++) {
+        if (arena[y][x] === 0) continue outer;
+      }
+      const row = arena.splice(y, 1)[0].fill(0);
+      arena.unshift(row);
+      y++;
+      linesCleared++;
+      player.score += rowCount * 10;
+      rowCount *= 2;
+    }
+    if (linesCleared > 0) {
+      player.lines += linesCleared;
+      if (linesCleared > 1) player.combo++;
+      else player.combo = 0;
+      updateStats();
+    }
+  }
+
+  // Atualiza os números na tela
+  function updateStats() {
+    scoreEl.textContent = player.score;
+    linesEl.textContent = player.lines;
+    comboEl.textContent = player.combo;
+  }
+
+  // Atualiza o tempo decorrido
+  function updateTime() {
+    if (gamePaused || gameOver) return;
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    timeEl.textContent = elapsed;
+  }
+
+  // Move peça pro lado
+  function move(dir) {
+    player.pos.x += dir;
+    if (collide(arena, player)) {
+      player.pos.x -= dir;
+    }
+  }
+
+  // Faz a peça cair
+  function playerDrop() {
+    player.pos.y++;
+    if (collide(arena, player)) {
+      player.pos.y--;
+      merge(arena, player);
+      arenaSweep();
+      playerReset();
+      updateStats();
+    }
+    dropCounter = 0;
+  }
+
+  // Gira a peça
+  function rotate(dir) {
+    const matrix = player.matrix;
+    const len = matrix.length;
+    for (let y = 0; y < len; y++) {
+      for (let x = y; x < len; x++) {
+        [matrix[y][x], matrix[x][y]] = [matrix[x][y], matrix[y][x]];
+      }
+    }
+    if (dir > 0) matrix.forEach(row => row.reverse());
+    else matrix.reverse();
+    let offset = 1;
+    while (collide(arena, player)) {
+      player.pos.x += offset;
+      offset = -(offset + (offset > 0 ? 1 : -1));
+      if (offset > matrix[0].length) {
+        rotate(-dir);
+        return;
+      }
+    }
+  }
+
+  // Loop principal do jogo
+  function update(time = 0) {
+    if (gamePaused) {
+      lastTime = time;
+      requestAnimationFrame(update);
+      return;
+    }
+    const deltaTime = time - lastTime;
+    lastTime = time;
+    dropCounter += deltaTime;
+    if (dropCounter > dropInterval) playerDrop();
+    updateTime();
+    draw();
+    if (!gameOver) requestAnimationFrame(update);
+  }
+
+  // Inicia o jogo
+  function startGame() {
+    arena = createMatrix(10, 20);
+    player.score = 0;
+    player.lines = 0;
+    player.combo = 0;
+    updateStats();
+    playerReset();
+    startTime = Date.now();
+    gamePaused = false;
+    gameOver = false;
+    gameOverScreen.style.display = 'none';
+    update();
+  }
+
+  // Pausa o jogo
+  function pauseGame() {
+    if (gameOver) return;
+    gamePaused = !gamePaused;
+  }
+
+  // Reinicia
+  function restartGame() {
+    startGame();
+  }
+
+  // ==== BOTÕES E TECLADO ====
+
+  document.getElementById('left').addEventListener('click', () => { if (!gamePaused) move(-1); });
+  document.getElementById('right').addEventListener('click', () => { if (!gamePaused) move(1); });
+  document.getElementById('down').addEventListener('click', () => { if (!gamePaused) playerDrop(); });
+  document.getElementById('rotate').addEventListener('click', () => { if (!gamePaused) rotate(1); });
+  document.getElementById('start').addEventListener('click', () => { startGame(); });
+  document.getElementById('pause').addEventListener('click', () => { pauseGame(); });
+  document.getElementById('restart').addEventListener('click', () => { restartGame(); });
+
+  // Teclado também controla o jogo
+  document.addEventListener('keydown', event => {
+    if (gamePaused || gameOver) {
+      if (gameOver && event.key.toLowerCase() === 'e') restartGame();
+      return;
+    }
+    switch(event.key) {
+      case 'ArrowLeft': move(-1); break;
+      case 'ArrowRight': move(1); break;
+      case 'ArrowDown': playerDrop(); break;
+      case 'ArrowUp': rotate(1); break;
+      case 'p': case 'P': pauseGame(); break;
+    }
+  });
+
+  // Escalas do canvas
+  ctx.scale(1, 1);
+  nextCtx.scale(1, 1);
+
+  // Primeira peça já preparada
+  player.next = createPiece();
+</script>
+
+</body>
+</html>
